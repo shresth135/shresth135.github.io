@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://shresth135.github.io/sitemap.xml
