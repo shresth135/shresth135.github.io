@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AWS Route 53 Clone · Shresth Bipin</title>
+<meta name="description" content="Case study: a full-stack AWS Route 53 clone with Next.js, FastAPI, SQLAlchemy and a REST API for hosted zones and DNS records.">
+<meta property="og:title" content="AWS Route 53 Clone · Shresth Bipin">
+<meta property="og:description" content="Hosted zones and nine DNS record types, Next.js on Vercel, FastAPI on Render.">
+<meta property="og:image" content="https://shresth135.github.io/og.png">
+<meta name="theme-color" content="#050608">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23050608'/%3E%3Ctext x='32' y='42' font-family='Arial Black,Arial' font-weight='900' font-size='26' text-anchor='middle' fill='%235fe0ff'%3ESB%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="case.css">
+<style>
+.arch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch; position: relative; }
+.tier { background: var(--panel-2); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 6px; position: relative; min-width: 0; }
+.tier b { font-family: var(--display); font-size: 15px; }
+.tier span { font-size: 13.5px; color: var(--muted); }
+.tier .host { font-family: var(--mono); font-size: 11px; color: var(--amber); letter-spacing: .06em; text-transform: uppercase; }
+.tier:not(:last-child)::after { content: "→"; position: absolute; right: -11px; top: 50%; transform: translate(50%, -50%); color: var(--cyan); font-family: var(--mono); z-index: 1; }
+.schema { display: grid; grid-template-columns: minmax(0, 1fr) 60px minmax(0, 1fr); gap: 0; align-items: center; }
+.tbl { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; font-family: var(--mono); font-size: 13px; min-width: 0; }
+.tbl h3 { font-family: var(--mono); font-size: 13px; font-weight: 500; padding: 10px 14px; background: rgba(77,124,255,.15); color: var(--fg); letter-spacing: 0; }
+.tbl div { display: flex; justify-content: space-between; gap: 10px; padding: 7px 14px; border-top: 1px solid var(--line); }
+.tbl div span:last-child { color: var(--muted); text-align: right; }
+.tbl .pk span:first-child { color: var(--amber); } .tbl .fk span:first-child { color: var(--cyan); }
+.rel { text-align: center; font-family: var(--mono); font-size: 12px; color: var(--cyan); line-height: 1.3; }
+.verb { font-family: var(--mono); font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 6px; }
+.verb.get { background: rgba(61,220,151,.15); color: var(--mint); } .verb.post { background: rgba(77,124,255,.18); color: #9db4ff; }
+.verb.put { background: rgba(255,181,71,.15); color: var(--amber); } .verb.del { background: rgba(255,107,107,.15); color: #ff8f8f; }
+.types { display: flex; flex-wrap: wrap; gap: 8px; }
+.types span { font-family: var(--mono); font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
+@media (max-width: 760px) {
+  .arch { grid-template-columns: minmax(0, 1fr); }
+  .tier:not(:last-child)::after { content: "↓"; right: 50%; top: auto; bottom: -11px; transform: translate(50%, 50%); }
+  .schema { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
+</style>
+</head>
+<body>
+<nav class="top"><div class="wrap"><a class="back" href="../">← Shresth Bipin</a><div class="right"><a href="cuda.html">CUDA case study</a><a href="../Shresth_Bipin_Resume.pdf">Resume</a></div></div></nav>
+
+<main class="wrap">
+  <header class="case">
+    <span class="eyebrow">Case study · Full-stack web</span>
+    <h1>AWS Route 53, <span class="grad">rebuilt</span></h1>
+    <p class="lede">A working clone of Route 53's core: create hosted zones, add and edit DNS records across nine record types, and search them, with a dashboard modelled on the AWS console. The front end and API are deployed separately.</p>
+    <div class="facts">
+      <div><span>Record types</span><b>9</b></div>
+      <div><span>REST endpoints</span><b>9</b></div>
+      <div><span>Front end</span><b>Next.js · Vercel</b></div>
+      <div><span>API</span><b>FastAPI · Render</b></div>
+    </div>
+    <div class="btns">
+      <a class="btn primary" href="https://route53-clone-beryl.vercel.app" target="_blank" rel="noopener">Open live app ↗</a>
+      <a class="btn" href="https://route53-clone-z4m4.onrender.com/docs" target="_blank" rel="noopener">API docs ↗</a>
+      <a class="btn" href="https://github.com/shresth135/route53-clone" target="_blank" rel="noopener">Code ↗</a>
+    </div>
+    <p class="figcap">The API runs on Render's free tier, so the first request after a quiet spell can take up to 30 seconds while the server wakes.</p>
+  </header>
+
+  <section class="part">
+    <span class="eyebrow">01 · Architecture</span>
+    <h2>Two deployments, one contract</h2>
+    <p>I kept the front end and back end fully decoupled so each could be built, deployed and replaced on its own. The only thing they share is the REST contract under <code>/api/v1</code>, and CORS is locked to localhost and the production Vercel origin.</p>
+    <div class="figure">
+      <div class="arch">
+        <div class="tier"><span class="host">Vercel</span><b>Next.js App Router</b><span>React + Tailwind v4, styled after the AWS console</span></div>
+        <div class="tier"><span class="host">HTTP · JSON</span><b>Axios</b><span>Calls <code>/api/v1</code> from the client</span></div>
+        <div class="tier"><span class="host">Render</span><b>FastAPI</b><span>Routers, Pydantic schemas, CRUD layer</span></div>
+        <div class="tier"><span class="host">ORM</span><b>SQLAlchemy → SQLite</b><span>Tables created on start-up</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">02 · Data model</span>
+    <h2>Zones own their records</h2>
+    <p>Two tables in a one-to-many relationship. The ORM relationship uses <code>cascade="all, delete-orphan"</code>, so deleting a hosted zone removes its records with it instead of leaving orphans behind.</p>
+    <div class="figure">
+      <div class="schema">
+        <div class="tbl"><h3>hosted_zones</h3>
+          <div class="pk"><span>id</span><span>integer · PK</span></div>
+          <div><span>name</span><span>string · indexed</span></div>
+          <div><span>description</span><span>string · nullable</span></div>
+          <div><span>type</span><span>"Public" default</span></div>
+          <div><span>created_at</span><span>datetime</span></div>
+        </div>
+        <div class="rel">1 ──< n<br>cascade</div>
+        <div class="tbl"><h3>dns_records</h3>
+          <div class="pk"><span>id</span><span>integer · PK</span></div>
+          <div class="fk"><span>zone_id</span><span>FK → hosted_zones.id</span></div>
+          <div><span>name</span><span>string · indexed</span></div>
+          <div><span>record_type</span><span>string · indexed</span></div>
+          <div><span>value</span><span>string</span></div>
+          <div><span>ttl</span><span>integer · 300 default</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="types" aria-label="Supported record types"><span>A</span><span>AAAA</span><span>CNAME</span><span>TXT</span><span>MX</span><span>NS</span><span>PTR</span><span>SRV</span><span>CAA</span></div>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">03 · API</span>
+    <h2>Nine endpoints, typed both ways</h2>
+    <p>Each resource has separate Pydantic models for what comes in (<code>HostedZoneCreate</code>) and what goes out (<code>HostedZoneResponse</code>), so the API never echoes fields a client shouldn't set, like <code>id</code> or <code>created_at</code>. Missing zones and records return a 404 instead of failing silently. FastAPI generates the Swagger docs from the same models.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead>
+        <tbody>
+          <tr><td><span class="verb post">POST</span></td><td class="num">/auth/login</td><td>Mock sign-in, returns a token</td></tr>
+          <tr><td><span class="verb get">GET</span></td><td class="num">/zones/</td><td>List hosted zones</td></tr>
+          <tr><td><span class="verb post">POST</span></td><td class="num">/zones/</td><td>Create a zone</td></tr>
+          <tr><td><span class="verb put">PUT</span></td><td class="num">/zones/{zone_id}</td><td>Update a zone</td></tr>
+          <tr><td><span class="verb del">DELETE</span></td><td class="num">/zones/{zone_id}</td><td>Delete a zone and its records</td></tr>
+          <tr><td><span class="verb get">GET</span></td><td class="num">/zones/{zone_id}/records/</td><td>List a zone's records</td></tr>
+          <tr><td><span class="verb post">POST</span></td><td class="num">/zones/{zone_id}/records/</td><td>Create a record</td></tr>
+          <tr><td><span class="verb put">PUT</span></td><td class="num">/records/{record_id}</td><td>Edit a record</td></tr>
+          <tr><td><span class="verb del">DELETE</span></td><td class="num">/records/{record_id}</td><td>Delete a record</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">04 · Front end</span>
+    <h2>Built to feel like the console</h2>
+    <ul class="plain">
+      <li><b>Zone detail page</b> with create, edit and delete for records in one form that switches between modes.</li>
+      <li><b>Instant search</b> across record names and values, filtered on the client, with pagination that resets when the query changes.</li>
+      <li><b>Session persistence</b> through a token in <code>localStorage</code>, with dashboard routes closed to signed-out users.</li>
+      <li><b>The rest of the console</b> (traffic policies, health checks, resolver, profiles) exists as placeholder pages, so navigation behaves like the real product.</li>
+    </ul>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">05 · Next</span>
+    <h2>What I'd do next</h2>
+    <div class="next">
+      <article><h3>Real authentication</h3><p>Replace the mock login with hashed passwords and signed JWTs checked on every API route, not only in the front end.</p></article>
+      <article><h3>Validate records by type</h3><p>Constrain <code>record_type</code> to an enum and check values per type: IPv4 for A, IPv6 for AAAA, a hostname for CNAME, a priority for MX.</p></article>
+      <article><h3>Move to Postgres</h3><p>Render's free tier doesn't keep files between deploys, so SQLite data can reset. A managed Postgres would keep it, with migrations through Alembic.</p></article>
+      <article><h3>Tests and server-side search</h3><p>Add pytest coverage for the CRUD layer, and move search and pagination to the API for zones with thousands of records.</p></article>
+    </div>
+  </section>
+
+  <footer class="case"><a href="cuda.html">← CUDA case study</a><a href="../">Back to portfolio →</a></footer>
+</main>
+</body>
+</html>

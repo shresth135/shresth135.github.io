@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CUDA Image Processing · Shresth Bipin</title>
+<meta name="description" content="Case study: CUDA kernels for Sobel edge detection and Gaussian blur, 135.6× faster than the CPU at 1024×1024.">
+<meta property="og:title" content="CUDA Image Processing · Shresth Bipin">
+<meta property="og:description" content="One thread per pixel, 16×16 blocks, 112.7 ms → 0.8 ms at 1024².">
+<meta property="og:image" content="https://shresth135.github.io/og.png">
+<meta name="theme-color" content="#050608">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23050608'/%3E%3Ctext x='32' y='42' font-family='Arial Black,Arial' font-weight='900' font-size='26' text-anchor='middle' fill='%235fe0ff'%3ESB%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="case.css">
+<style>
+.demo canvas { width: 100%; aspect-ratio: 16 / 10; border-radius: 14px; display: block; background: #000; }
+.demo label { display: flex; align-items: center; gap: 14px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.demo input[type=range] { flex: 1; accent-color: var(--amber); min-width: 0; }
+.bars { display: grid; gap: 14px; }
+.bar-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 90px; gap: 14px; align-items: center; font-size: 15px; }
+.bar-row .track { height: 16px; background: rgba(255,255,255,.05); border-radius: 999px; overflow: hidden; }
+.bar-row .track i { display: block; height: 100%; border-radius: 999px; min-width: 3px; }
+.bar-row.cpu i { background: var(--dim); }
+.bar-row.gpu i { background: linear-gradient(90deg, var(--cyan), var(--cobalt)); box-shadow: 0 0 18px rgba(95,224,255,.6); }
+.bar-row .v { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.grid-fig { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; width: 100%; max-width: 360px; }
+.grid-fig i { aspect-ratio: 1; border-radius: 3px; background: rgba(77,124,255,.18); border: 1px solid rgba(77,124,255,.35); }
+.grid-fig i.b { background: rgba(255,181,71,.25); border-color: rgba(255,181,71,.6); }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: center; }
+@media (max-width: 760px) { .split { grid-template-columns: minmax(0, 1fr); } .bar-row { grid-template-columns: minmax(0, 1fr) 80px; } .bar-row .lab { grid-column: 1 / -1; } }
+</style>
+</head>
+<body>
+<nav class="top"><div class="wrap"><a class="back" href="../">← Shresth Bipin</a><div class="right"><a href="route53.html">Route 53 case study</a><a href="../Shresth_Bipin_Resume.pdf">Resume</a></div></div></nav>
+
+<main class="wrap">
+  <header class="case">
+    <span class="eyebrow">Case study · GPU programming</span>
+    <h1>Parallel image processing <span class="grad">in CUDA</span></h1>
+    <p class="lede">A Sobel edge detector and a Gaussian blur, written as CUDA kernels and benchmarked against an equivalent single-threaded CPU loop. At 1024×1024 the Sobel kernel ran in 0.8 ms against 112.7 ms on the CPU.</p>
+    <div class="facts">
+      <div><span>Speedup</span><b class="grad">135.6× at 1024²</b></div>
+      <div><span>Role</span><b>Solo project</b></div>
+      <div><span>Stack</span><b>CUDA C/C++, NVCC</b></div>
+      <div><span>Sizes tested</span><b>512² → 4096²</b></div>
+    </div>
+    <div class="btns"><a class="btn primary" href="https://github.com/shresth135/cuda-image-processing" target="_blank" rel="noopener">View the code ↗</a><a class="btn" href="#results">Jump to results</a></div>
+  </header>
+
+  <section class="part">
+    <span class="eyebrow">01 · Try it</span>
+    <h2>What a Sobel filter does</h2>
+    <p class="muted">Drag the slider to run the same 3×3 Sobel operator over a test frame. This version runs in JavaScript on your CPU; the project runs it as a CUDA kernel, one thread per pixel.</p>
+    <div class="figure demo">
+      <canvas id="sobel" aria-label="Test image with Sobel edge detection applied up to the slider position"></canvas>
+      <label for="sweep">Input<input id="sweep" type="range" min="0" max="100" value="55">Edges</label>
+    </div>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">02 · The problem</span>
+    <h2>A 3×3 stencil is perfectly parallel</h2>
+    <p>Both filters compute each output pixel from its 3×3 neighbourhood. No output pixel depends on another output pixel, so the work splits cleanly. A CPU loop walks through all 1,048,576 pixels of a 1024² frame one after another. A GPU can hand each pixel to its own thread.</p>
+    <p>Sobel convolves the neighbourhood with two kernels, <code>Gx</code> for horizontal change and <code>Gy</code> for vertical change, and keeps the gradient magnitude <code>√(Gx² + Gy²)</code>, clamped to 255. The Gaussian blur uses the 1-2-1 weighted kernel divided by 16.</p>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">03 · Approach</span>
+    <h2>One thread per pixel, 16×16 blocks</h2>
+    <div class="split">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <p>Threads are grouped into 16×16 blocks (256 threads each). The grid is sized with a ceiling division, <code>((w + 15) / 16, (h + 15) / 16)</code>, so any image size is covered. Each thread computes its row and column from its block and thread index, skips the one-pixel border, and writes a single output byte.</p>
+        <p class="muted">At 1024² that is a 64×64 grid of blocks: 4,096 blocks and about a million threads.</p>
+      </div>
+      <div class="figure" style="align-items:flex-start">
+        <div class="grid-fig" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i class="b"></i><i class="b"></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i class="b"></i><i class="b"></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <span class="figcap">Each square is one 16×16 thread block. Highlighted: four blocks, 1,024 pixels.</span>
+      </div>
+    </div>
+<pre><span class="k">__global__ void</span> <span class="f">processSobelGPU</span>(<span class="k">unsigned char</span>* d_in, <span class="k">unsigned char</span>* d_out, <span class="k">int</span> width, <span class="k">int</span> height) {
+    <span class="k">int</span> c = blockIdx.x * blockDim.x + threadIdx.x;
+    <span class="k">int</span> r = blockIdx.y * blockDim.y + threadIdx.y;
+    <span class="k">int</span> Gx[<span class="n">3</span>][<span class="n">3</span>] = {{-<span class="n">1</span>, <span class="n">0</span>, <span class="n">1</span>}, {-<span class="n">2</span>, <span class="n">0</span>, <span class="n">2</span>}, {-<span class="n">1</span>, <span class="n">0</span>, <span class="n">1</span>}};
+    <span class="k">int</span> Gy[<span class="n">3</span>][<span class="n">3</span>] = {{-<span class="n">1</span>, -<span class="n">2</span>, -<span class="n">1</span>}, {<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>}, {<span class="n">1</span>, <span class="n">2</span>, <span class="n">1</span>}};
+    <span class="k">if</span> (r > <span class="n">0</span> && r < height - <span class="n">1</span> && c > <span class="n">0</span> && c < width - <span class="n">1</span>) {
+        <span class="k">float</span> sumX = <span class="n">0.0f</span>, sumY = <span class="n">0.0f</span>;
+        <span class="k">for</span> (<span class="k">int</span> i = -<span class="n">1</span>; i <= <span class="n">1</span>; i++)
+            <span class="k">for</span> (<span class="k">int</span> j = -<span class="n">1</span>; j <= <span class="n">1</span>; j++) {
+                <span class="k">int</span> pixel = d_in[(r + i) * width + (c + j)];
+                sumX += pixel * Gx[i+<span class="n">1</span>][j+<span class="n">1</span>];
+                sumY += pixel * Gy[i+<span class="n">1</span>][j+<span class="n">1</span>];
+            }
+        <span class="k">int</span> mag = (<span class="k">int</span>)<span class="f">sqrtf</span>(sumX * sumX + sumY * sumY);
+        d_out[r * width + c] = (<span class="k">unsigned char</span>)(mag > <span class="n">255</span> ? <span class="n">255</span> : mag);
+    } <span class="k">else if</span> (r < height && c < width) d_out[r * width + c] = <span class="n">0</span>;   <span class="c">// zero the border</span>
+}</pre>
+    <p class="figcap">From <a href="https://github.com/shresth135/cuda-image-processing/blob/main/benchmarks/benchmark.cu" target="_blank" rel="noopener">benchmarks/benchmark.cu</a>. The CPU reference in the same file runs the identical arithmetic in a nested loop.</p>
+  </section>
+
+  <section class="part" id="results">
+    <span class="eyebrow">04 · Results</span>
+    <h2>112.7 ms → 0.8 ms</h2>
+    <p class="muted">CPU time was measured with <code>std::chrono</code> around the CPU loop. GPU time was measured with CUDA events around the kernel launch.</p>
+    <div class="figure">
+      <div class="bars">
+        <div class="bar-row cpu"><span class="lab">CPU, single thread</span><span class="track"><i style="width:100%"></i></span><span class="v">112.7 ms</span></div>
+        <div class="bar-row gpu"><span class="lab">GPU kernel</span><span class="track"><i style="width:0.71%"></i></span><span class="v">0.8 ms</span></div>
+      </div>
+      <span class="figcap">Sobel on a 1024×1024 frame, drawn to scale. The GPU bar is 0.7% of the CPU bar.</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Resolution</th><th>CPU (ms)</th><th>GPU kernel (ms)</th><th>Speedup</th></tr></thead>
+        <tbody>
+          <tr><td class="num">512 × 512</td><td class="num">26.0</td><td class="num">0.3</td><td class="num">100.7×</td></tr>
+          <tr><td class="num">1024 × 1024</td><td class="num">112.7</td><td class="num">0.8</td><td class="num"><span class="hl">135.6×</span></td></tr>
+          <tr><td class="num">4096 × 4096</td><td class="num">—</td><td class="num">—</td><td class="num">65×</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="figcap">Speedups are the ratio of unrounded timings, so they differ slightly from dividing the rounded milliseconds. Only the speedup was recorded for 4096².</p>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">05 · Reading the numbers honestly</span>
+    <h2>What this benchmark does and doesn't show</h2>
+    <ul class="plain">
+      <li><b>Kernel time only.</b> The GPU figure covers the kernel, not the <code>cudaMemcpy</code> transfers to and from the device. End-to-end speedup for a single frame would be lower; it matters most when many frames are processed while data stays on the GPU.</li>
+      <li><b>Synthetic input.</b> The test image is a repeating 0–255 gradient, which is fine for timing because the arithmetic is the same for every pixel.</li>
+      <li><b>The speedup fell at 4096².</b> At 16.7 million pixels the gain dropped from 135.6× to 65×. Finding out why is the first thing I'd profile.</li>
+    </ul>
+  </section>
+
+  <section class="part">
+    <span class="eyebrow">06 · Next</span>
+    <h2>What I'd do next</h2>
+    <div class="next">
+      <article><h3>Tile into shared memory</h3><p>Each pixel is read by nine threads from global memory. Loading an 18×18 tile (block plus a one-pixel halo) into shared memory once per block should cut those reads sharply.</p></article>
+      <article><h3>Put weights in constant memory</h3><p>Move <code>Gx</code>, <code>Gy</code> and the Gaussian weights into <code>__constant__</code> memory so they are broadcast instead of rebuilt in every thread.</p></article>
+      <article><h3>Time the whole pipeline</h3><p>Report transfer plus kernel time, try pinned host memory, and overlap copies with compute using streams.</p></article>
+      <article><h3>Real images and fused filters</h3><p>Load real photos, run blur then Sobel in one pass, and use a separable Gaussian (two 1D passes) for larger kernels.</p></article>
+    </div>
+  </section>
+
+  <footer class="case"><a href="../">← Back to portfolio</a><a href="route53.html">Next: AWS Route 53 clone →</a></footer>
+</main>
+
+<script>
+(function () {
+  const IW = 480, IH = 300, src = document.createElement('canvas'); src.width = IW; src.height = IH;
+  const g = src.getContext('2d');
+  const sky = g.createLinearGradient(0, 0, 0, IH); sky.addColorStop(0, '#1b2a5c'); sky.addColorStop(0.6, '#d9785a'); sky.addColorStop(1, '#f6c27a');
+  g.fillStyle = sky; g.fillRect(0, 0, IW, IH);
+  g.fillStyle = '#ffe2a8'; g.beginPath(); g.arc(330, 150, 46, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#3a2b4f'; g.beginPath(); g.moveTo(0, 210); [[60,150],[120,190],[190,120],[260,200],[320,160],[400,210],[480,170],[480,300],[0,300]].forEach(p => g.lineTo(p[0], p[1])); g.fill();
+  g.fillStyle = '#16152a'; [[20,230,40,70],[70,205,30,95],[110,240,46,60],[170,190,34,110],[215,225,52,75],[285,200,30,100],[330,235,60,65],[400,212,34,88],[440,240,40,60]].forEach(b => g.fillRect(...b));
+  g.fillStyle = '#f6c27a'; for (let i = 0; i < 60; i++) g.fillRect(20 + (i * 97 % 450), 215 + (i * 37 % 75), 3, 4);
+  const edge = document.createElement('canvas'); edge.width = IW; edge.height = IH;
+  const d = g.getImageData(0, 0, IW, IH).data, gray = new Float32Array(IW * IH);
+  for (let i = 0; i < IW * IH; i++) gray[i] = d[i*4] * .299 + d[i*4+1] * .587 + d[i*4+2] * .114;
+  const out = edge.getContext('2d').createImageData(IW, IH), o = out.data;
+  for (let y = 1; y < IH - 1; y++) for (let x = 1; x < IW - 1; x++) {
+    const k = (dx, dy) => gray[(y + dy) * IW + x + dx];
+    const gx = -k(-1,-1) - 2*k(-1,0) - k(-1,1) + k(1,-1) + 2*k(1,0) + k(1,1);
+    const gy = -k(-1,-1) - 2*k(0,-1) - k(1,-1) + k(-1,1) + 2*k(0,1) + k(1,1);
+    const m = Math.min(255, Math.sqrt(gx*gx + gy*gy) * 1.4) / 255, i = (y * IW + x) * 4;
+    o[i] = 20 + 75*m; o[i+1] = 20 + 204*m; o[i+2] = 30 + 225*m; o[i+3] = 255;
+  }
+  edge.getContext('2d').putImageData(out, 0, 0);
+  const c = document.getElementById('sobel'), cx = c.getContext('2d'), s = document.getElementById('sweep');
+  function draw() {
+    const dpr = Math.min(devicePixelRatio || 1, 2); c.width = c.clientWidth * dpr; c.height = c.clientHeight * dpr;
+    const W = c.width, H = c.height, x = W * s.value / 100;
+    cx.drawImage(edge, 0, 0, W, H);
+    cx.save(); cx.beginPath(); cx.rect(x, 0, W - x, H); cx.clip(); cx.drawImage(src, 0, 0, W, H); cx.restore();
+    cx.fillStyle = '#ffb547'; cx.fillRect(x - 1.5, 0, 3, H);
+  }
+  s.addEventListener('input', draw); addEventListener('resize', draw); draw();
+})();
+</script>
+</body>
+</html>
